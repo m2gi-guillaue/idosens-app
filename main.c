@@ -18,7 +18,90 @@
 #include "tsl2561.h"
 #include "tsl2561_params.h"
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
+#include "msg.h"
+#include "thread.h"
+#include "fmt.h"
+
+#include "net/loramac.h"
+#include "semtech_loramac.h"
+
+#include "sx127x.h"
+#include "sx127x_netdev.h"
+#include "sx127x_params.h"
+
+#define PERIOD_S            (20U)
+
+#define SENDER_PRIO         (THREAD_PRIORITY_MAIN - 1)
+static kernel_pid_t sender_pid;
+static char sender_stack[THREAD_STACKSIZE_MAIN / 2];
+
+static semtech_loramac_t loramac;
+
+static sx127x_t sx127x;
+
+static ztimer_t timer;
+
+static at30tse75x_t temp_driver;
+
+static uint8_t deveui[LORAMAC_DEVEUI_LEN];
+static uint8_t appeui[LORAMAC_APPEUI_LEN];
+static uint8_t appkey[LORAMAC_APPKEY_LEN];
+
+
+
+static void _alarm_cb(void *arg)
+{
+    (void) arg;
+    msg_t msg;
+    msg_send(&msg, sender_pid);
+}
+
+static void _prepare_next_alarm(void)
+{
+    timer.callback = _alarm_cb;
+    ztimer_set(ZTIMER_MSEC, &timer, PERIOD_S * MS_PER_SEC);
+}
+
+static void _send_message(void)
+{
+    float temp = 0.0f;
+    if (at30tse75x_get_temperature(&temp_driver, &temp) == 0){
+        /* Try to send the message */
+        uint8_t ret = semtech_loramac_send(&loramac,
+                                            (uint8_t *) &temp, sizeof(temp));
+        if (ret != SEMTECH_LORAMAC_TX_DONE)  {
+            printf("Cannot send message");
+            return;
+        }
+    }
+    
+}
+
+static void *sender(void *arg)
+{
+    (void)arg;
+
+    msg_t msg;
+    msg_t msg_queue[8];
+    msg_init_queue(msg_queue, 8);
+
+    while (1) {
+        msg_receive(&msg);
+
+        /* Trigger the message send */
+        _send_message();
+
+        /* Schedule the next wake-up alarm */
+        _prepare_next_alarm();
+    }
+
+    /* this should never be reached */
+    return NULL;
+}
 
 static void delay(void)
 {
@@ -43,30 +126,53 @@ static void delay(void)
 
 int main(void)
 {
-    at30tse75x_t temp_driver;
-    float temp = 0.0f;
 
-    /* tsl2561_t light_driver;
-    tsl2561_params_t params = TSL2561_PARAMS;
-    uint16_t light;
-    char light_s[50];
-    int err;
-
-    while ((err = tsl2561_init(&light_driver, &params)) != 0){
-        if (err == -1) {
-            puts("I2C not available");
-        } else {
-            puts("not TSL2561");
-        }
-        delay();
-    } */
-
+    puts("Starting temperature driver");
     while (at30tse75x_init(&temp_driver, PORT_A, AT30TSE75X_TEMP_ADDR) != 0) {
-        puts("error init driver sensor");
+        puts("error temperature driver sensor");
         delay();
     };
+    puts("Starting init temperature driver succeeded");
 
-    while(1) {
+    /* Convert identifiers and application key */
+    fmt_hex_bytes(deveui, CONFIG_LORAMAC_DEV_EUI_DEFAULT);
+    fmt_hex_bytes(appeui, CONFIG_LORAMAC_APP_EUI_DEFAULT);
+    fmt_hex_bytes(appkey, CONFIG_LORAMAC_APP_KEY_DEFAULT);
+
+    /* Initialize the radio driver */
+    sx127x_setup(&sx127x, &sx127x_params[0], 0);
+    loramac.netdev = &sx127x.netdev;
+    loramac.netdev->driver = &sx127x_driver;
+
+    /* Initialize the loramac stack */
+    semtech_loramac_init(&loramac);
+    semtech_loramac_set_deveui(&loramac, deveui);
+    semtech_loramac_set_appeui(&loramac, appeui);
+    semtech_loramac_set_appkey(&loramac, appkey);
+
+    /* Use a fast datarate, e.g. BW125/SF7 in EU868 */
+    semtech_loramac_set_dr(&loramac, LORAMAC_DR_5 );
+
+    /* Start the Over-The-Air Activation (OTAA) procedure to retrieve the
+     * generated device address and to get the network and application session
+     * keys.
+     */
+    puts("Starting join procedure");
+    while (semtech_loramac_join(&loramac, LORAMAC_JOIN_OTAA) != SEMTECH_LORAMAC_JOIN_SUCCEEDED) {
+        puts("Join procedure failed");
+        delay();
+    }
+    puts("Join procedure succeeded");
+
+        /* start the sender thread */
+    sender_pid = thread_create(sender_stack, sizeof(sender_stack),
+                               SENDER_PRIO, 0, sender, NULL, "sender");
+
+    /* trigger the first send */
+    msg_t msg;
+    msg_send(&msg, sender_pid);
+    return 0;
+    /*while(1) {
         delay();
         if (at30tse75x_get_temperature(&temp_driver, &temp) == 0){
             printf("Temperature: %i.%03u °C\n",
@@ -75,9 +181,6 @@ int main(void)
         } else {
             puts("error on get temperature");
         }
-        /* light = tsl2561_read_illuminance(&light_driver);
-        sprintf(light_s, "%d", light);
-        puts(light_s); */
-    }
+    }*/
     
 }
