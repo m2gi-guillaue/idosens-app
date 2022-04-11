@@ -15,8 +15,6 @@
 #include "timex.h"
 #include "ztimer.h"
 #include "at30tse75x.h"
-#include "tsl2561.h"
-#include "tsl2561_params.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -33,7 +31,7 @@
 #include "sx127x_netdev.h"
 #include "sx127x_params.h"
 
-#define PERIOD_S            (20U)
+#define PERIOD_S            (60U)
 
 #define SENDER_PRIO         (THREAD_PRIORITY_MAIN - 1)
 static kernel_pid_t sender_pid;
@@ -69,6 +67,7 @@ static void _prepare_next_alarm(void)
 static void _send_message(void)
 {
     float temp = 0.0f;
+    puts("envoi du message sur LORA");
     if (at30tse75x_get_temperature(&temp_driver, &temp) == 0){
         /* Try to send the message */
         uint8_t ret = semtech_loramac_send(&loramac,
@@ -101,27 +100,6 @@ static void *sender(void *arg)
 
     /* this should never be reached */
     return NULL;
-}
-
-static void delay(void)
-{
-    if (IS_USED(MODULE_ZTIMER)) {
-        ztimer_sleep(ZTIMER_USEC, 1 * US_PER_SEC);
-    }
-    else {
-        /*
-         * As fallback for freshly ported boards with no timer drivers written
-         * yet, we just use the CPU to delay execution and assume that roughly
-         * 20 CPU cycles are spend per loop iteration.
-         *
-         * Note that the volatile qualifier disables compiler optimizations for
-         * all accesses to the counter variable. Without volatile, modern
-         * compilers would detect that the loop is only wasting CPU cycles and
-         * optimize it out - but here the wasting of CPU cycles is desired.
-         */
-        uint32_t loops = coreclk() / 20;
-        for (volatile uint32_t i = 0; i < loops; i++) { }
-    }
 }
 
 int main(void)
@@ -160,7 +138,7 @@ int main(void)
     puts("Starting join procedure");
     while (semtech_loramac_join(&loramac, LORAMAC_JOIN_OTAA) != SEMTECH_LORAMAC_JOIN_SUCCEEDED) {
         puts("Join procedure failed");
-        delay();
+        ztimer_sleep(ZTIMER_USEC, 20 * US_PER_SEC);
     }
     puts("Join procedure succeeded");
 
@@ -172,15 +150,5 @@ int main(void)
     msg_t msg;
     msg_send(&msg, sender_pid);
     return 0;
-    /*while(1) {
-        delay();
-        if (at30tse75x_get_temperature(&temp_driver, &temp) == 0){
-            printf("Temperature: %i.%03u °C\n",
-                    (int)temp,
-                    (unsigned)((temp - (int)temp) * 1000));
-        } else {
-            puts("error on get temperature");
-        }
-    }*/
     
 }

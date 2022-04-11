@@ -17,9 +17,9 @@ FEATURES_OPTIONAL += periph_rtc
 # This has to be the absolute path to the RIOT base directory:
 RIOTBASE ?= $(CURDIR)/../..
 
-DEVEUI ?= c2c522e3c87d72d1
-APPEUI ?= 7c0664d7a026c984
-APPKEY ?= c9920be2743da39c57b0be48c2202904
+DEVEUI ?= 5059b3bb4101e86b
+APPEUI ?= 0000000000000000
+APPKEY ?= CD64DAA67DCB5AA4DC9E8148FAA3EFFA
 
 # Pass these enviroment variables to docker
 DOCKER_ENV_VARS += DEVEUI
@@ -28,7 +28,6 @@ DOCKER_ENV_VARS += APPKEY
 
 # we want to use SAUL:
 USEMODULE += at30tse75x
-USEMODULE += tsl2561
 # Comment this out to disable code in RIOT that does safety checking
 # which is not needed in a production environment but helps in the
 # development process:
